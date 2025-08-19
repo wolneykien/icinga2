@@ -69,6 +69,7 @@ public:
 };
 
 bool StatusHandler::HandleRequest(
+	const WaitGroup::Ptr&,
 	AsioTlsStream& stream,
 	const ApiUser::Ptr& user,
 	boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -117,4 +118,3 @@ bool StatusHandler::HandleRequest(
 
 	return true;
 }
-

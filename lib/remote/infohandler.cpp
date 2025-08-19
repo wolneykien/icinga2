@@ -9,6 +9,7 @@ using namespace icinga;
 REGISTER_URLHANDLER("/", InfoHandler);
 
 bool InfoHandler::HandleRequest(
+	const WaitGroup::Ptr&,
 	AsioTlsStream& stream,
 	const ApiUser::Ptr& user,
 	boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -97,4 +98,3 @@ bool InfoHandler::HandleRequest(
 
 	return true;
 }
-

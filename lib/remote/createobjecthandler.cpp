@@ -16,6 +16,7 @@ using namespace icinga;
 REGISTER_URLHANDLER("/v1/objects", CreateObjectHandler);
 
 bool CreateObjectHandler::HandleRequest(
+	const WaitGroup::Ptr& waitGroup,
 	AsioTlsStream& stream,
 	const ApiUser::Ptr& user,
 	boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -102,6 +103,12 @@ bool CreateObjectHandler::HandleRequest(
 		return true;
 	}
 
+	std::shared_lock wgLock{*waitGroup, std::try_to_lock};
+	if (!wgLock) {
+		HttpUtility::SendJsonError(response, params, 503, "Shutting down.");
+		return true;
+	}
+
 	/* Object creation can cause multiple errors and optionally diagnostic information.
 	 * We can't use SendJsonError() here.
 	 */
@@ -123,6 +130,9 @@ bool CreateObjectHandler::HandleRequest(
 
 		return true;
 	}
+
+	// Lock the object name of the given type to prevent from being created concurrently.
+	ObjectNameLock objectNameLock(type, name);
 
 	if (!ConfigObjectUtility::CreateObject(type, name, config, errors, diagnosticInformation)) {
 		result1->Set("errors", errors);

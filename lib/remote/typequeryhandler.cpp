@@ -47,6 +47,7 @@ public:
 };
 
 bool TypeQueryHandler::HandleRequest(
+	const WaitGroup::Ptr&,
 	AsioTlsStream& stream,
 	const ApiUser::Ptr& user,
 	boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -91,7 +92,7 @@ bool TypeQueryHandler::HandleRequest(
 
 	ArrayData results;
 
-	for (const Type::Ptr& obj : objs) {
+	for (Type::Ptr obj : objs) {
 		Dictionary::Ptr result1 = new Dictionary();
 		results.push_back(result1);
 

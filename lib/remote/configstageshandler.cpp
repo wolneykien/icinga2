@@ -15,6 +15,7 @@ REGISTER_URLHANDLER("/v1/config/stages", ConfigStagesHandler);
 std::atomic<bool> ConfigStagesHandler::m_RunningPackageUpdates (false);
 
 bool ConfigStagesHandler::HandleRequest(
+	const WaitGroup::Ptr&,
 	AsioTlsStream& stream,
 	const ApiUser::Ptr& user,
 	boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -222,4 +223,3 @@ void ConfigStagesHandler::HandleDelete(
 	response.result(http::status::ok);
 	HttpUtility::SendJsonBody(response, params, result);
 }
-

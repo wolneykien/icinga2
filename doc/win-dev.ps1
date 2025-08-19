@@ -11,10 +11,10 @@ function ThrowOnNativeFailure {
 }
 
 
-$VsVersion = 2019
-$MsvcVersion = '14.2'
-$BoostVersion = @(1, 82, 0)
-$OpensslVersion = '3_0_9'
+$VsVersion = 2022
+$MsvcVersion = '14.3'
+$BoostVersion = @(1, 88, 0)
+$OpensslVersion = '3_0_16'
 
 switch ($Env:BITS) {
 	32 { }
@@ -74,7 +74,6 @@ try {
 if (-not $Env:GITHUB_ACTIONS) {
     choco install -y `
         "visualstudio${VsVersion}community" `
-        "visualstudio${VsVersion}-workload-netcoretools" `
         "visualstudio${VsVersion}-workload-vctools" `
         "visualstudio${VsVersion}-workload-manageddesktop" `
         "visualstudio${VsVersion}-workload-nativedesktop" `
@@ -83,6 +82,7 @@ if (-not $Env:GITHUB_ACTIONS) {
         git `
         cmake `
         winflexbison3 `
+        netfx-4.6-devpack `
         windows-sdk-8.1 `
         wixtoolset
     ThrowOnNativeFailure
@@ -91,6 +91,8 @@ if (-not $Env:GITHUB_ACTIONS) {
     ThrowOnNativeFailure
 }
 
+# Disable the progress bar for downloads from the Web, which will speed up the entire download process
+$Global:ProgressPreference = 'SilentlyContinue';
 
 Install-Exe -Url "https://packages.icinga.com/windows/dependencies/boost_$($BoostVersion -join '_')-msvc-${MsvcVersion}-${Env:BITS}.exe" -Dir "C:\local\boost_$($BoostVersion -join '_')-Win${Env:BITS}"
 

@@ -47,6 +47,7 @@ void HttpHandler::Register(const Url::Ptr& url, const HttpHandler::Ptr& handler)
 }
 
 void HttpHandler::ProcessRequest(
+	const WaitGroup::Ptr& waitGroup,
 	AsioTlsStream& stream,
 	const ApiUser::Ptr& user,
 	boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -66,7 +67,7 @@ void HttpHandler::ProcessRequest(
 
 		if (current_handlers) {
 			ObjectLock olock(current_handlers);
-			for (const HttpHandler::Ptr& current_handler : current_handlers) {
+			for (HttpHandler::Ptr current_handler : current_handlers) {
 				handlers.push_back(current_handler);
 			}
 		}
@@ -108,7 +109,7 @@ void HttpHandler::ProcessRequest(
 	 */
 	try {
 		for (const HttpHandler::Ptr& handler : handlers) {
-			if (handler->HandleRequest(stream, user, request, url, response, params, yc, server)) {
+			if (handler->HandleRequest(waitGroup, stream, user, request, url, response, params, yc, server)) {
 				processed = true;
 				break;
 			}
@@ -126,4 +127,3 @@ void HttpHandler::ProcessRequest(
 		return;
 	}
 }
-

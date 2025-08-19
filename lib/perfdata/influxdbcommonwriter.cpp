@@ -37,7 +37,6 @@
 #include <boost/math/special_functions/fpclassify.hpp>
 #include <boost/regex.hpp>
 #include <boost/scoped_array.hpp>
-#include <iomanip>
 #include <memory>
 #include <string>
 #include <utility>
@@ -205,15 +204,6 @@ void InfluxdbCommonWriter::CheckResultHandler(const Checkable::Ptr& checkable, c
 	if (IsPaused())
 		return;
 
-	m_WorkQueue.Enqueue([this, checkable, cr]() { CheckResultHandlerWQ(checkable, cr); }, PriorityLow);
-}
-
-void InfluxdbCommonWriter::CheckResultHandlerWQ(const Checkable::Ptr& checkable, const CheckResult::Ptr& cr)
-{
-	AssertOnWorkQueue();
-
-	CONTEXT("Processing check result for '" << checkable->GetName() << "'");
-
 	if (!IcingaApplication::GetInstance()->GetEnablePerfdata() || !checkable->GetEnablePerfdata())
 		return;
 
@@ -225,10 +215,6 @@ void InfluxdbCommonWriter::CheckResultHandlerWQ(const Checkable::Ptr& checkable,
 	if (service)
 		resolvers.emplace_back("service", service);
 	resolvers.emplace_back("host", host);
-
-	String prefix;
-
-	double ts = cr->GetExecutionEnd();
 
 	// Clone the template and perform an in-place macro expansion of measurement and tag values
 	Dictionary::Ptr tmpl_clean = service ? GetServiceTemplate() : GetHostTemplate();
@@ -254,56 +240,9 @@ void InfluxdbCommonWriter::CheckResultHandlerWQ(const Checkable::Ptr& checkable,
 		tmpl->Set("tags", tags);
 	}
 
-	CheckCommand::Ptr checkCommand = checkable->GetCheckCommand();
-
-	Array::Ptr perfdata = cr->GetPerformanceData();
-
-	if (perfdata) {
-		ObjectLock olock(perfdata);
-		for (const Value& val : perfdata) {
-			PerfdataValue::Ptr pdv;
-
-			if (val.IsObjectType<PerfdataValue>())
-				pdv = val;
-			else {
-				try {
-					pdv = PerfdataValue::Parse(val);
-				} catch (const std::exception&) {
-					Log(LogWarning, GetReflectionType()->GetName())
-						<< "Ignoring invalid perfdata for checkable '"
-						<< checkable->GetName() << "' and command '"
-						<< checkCommand->GetName() << "' with value: " << val;
-					continue;
-				}
-			}
-
-			Dictionary::Ptr fields = new Dictionary();
-			fields->Set("value", pdv->GetValue());
-
-			if (GetEnableSendThresholds()) {
-				if (!pdv->GetCrit().IsEmpty())
-					fields->Set("crit", pdv->GetCrit());
-				if (!pdv->GetWarn().IsEmpty())
-					fields->Set("warn", pdv->GetWarn());
-				if (!pdv->GetMin().IsEmpty())
-					fields->Set("min", pdv->GetMin());
-				if (!pdv->GetMax().IsEmpty())
-					fields->Set("max", pdv->GetMax());
-			}
-			if (!pdv->GetUnit().IsEmpty()) {
-				fields->Set("unit", pdv->GetUnit());
-			}
-
-			SendMetric(checkable, tmpl, pdv->GetLabel(), fields, ts);
-		}
-	}
-
+	Dictionary::Ptr fields;
 	if (GetEnableSendMetadata()) {
-		Host::Ptr host;
-		Service::Ptr service;
-		tie(host, service) = GetHostService(checkable);
-
-		Dictionary::Ptr fields = new Dictionary();
+		fields = new Dictionary();
 
 		if (service)
 			fields->Set("state", new InfluxdbInteger(service->GetState()));
@@ -318,9 +257,57 @@ void InfluxdbCommonWriter::CheckResultHandlerWQ(const Checkable::Ptr& checkable,
 		fields->Set("acknowledgement", new InfluxdbInteger(checkable->GetAcknowledgement()));
 		fields->Set("latency", cr->CalculateLatency());
 		fields->Set("execution_time", cr->CalculateExecutionTime());
-
-		SendMetric(checkable, tmpl, Empty, fields, ts);
 	}
+
+	m_WorkQueue.Enqueue([this, checkable, cr, tmpl = std::move(tmpl), metadataFields = std::move(fields)]() {
+		CONTEXT("Processing check result for '" << checkable->GetName() << "'");
+
+		double ts = cr->GetExecutionEnd();
+
+		if (Array::Ptr perfdata = cr->GetPerformanceData()) {
+			ObjectLock olock(perfdata);
+			for (const Value& val : perfdata) {
+				PerfdataValue::Ptr pdv;
+
+				if (val.IsObjectType<PerfdataValue>())
+					pdv = val;
+				else {
+					try {
+						pdv = PerfdataValue::Parse(val);
+					} catch (const std::exception&) {
+						Log(LogWarning, GetReflectionType()->GetName())
+							<< "Ignoring invalid perfdata for checkable '"
+							<< checkable->GetName() << "' and command '"
+							<< checkable->GetCheckCommand()->GetName() << "' with value: " << val;
+						continue;
+					}
+				}
+
+				Dictionary::Ptr fields = new Dictionary();
+				fields->Set("value", pdv->GetValue());
+
+				if (GetEnableSendThresholds()) {
+					if (!pdv->GetCrit().IsEmpty())
+						fields->Set("crit", pdv->GetCrit());
+					if (!pdv->GetWarn().IsEmpty())
+						fields->Set("warn", pdv->GetWarn());
+					if (!pdv->GetMin().IsEmpty())
+						fields->Set("min", pdv->GetMin());
+					if (!pdv->GetMax().IsEmpty())
+						fields->Set("max", pdv->GetMax());
+				}
+				if (!pdv->GetUnit().IsEmpty()) {
+					fields->Set("unit", pdv->GetUnit());
+				}
+
+				SendMetric(checkable, tmpl, pdv->GetLabel(), fields, ts);
+			}
+		}
+
+		if (metadataFields) {
+			SendMetric(checkable, tmpl, Empty, metadataFields, ts);
+		}
+	}, PriorityLow);
 }
 
 String InfluxdbCommonWriter::EscapeKeyOrTagValue(const String& str)
@@ -365,6 +352,8 @@ String InfluxdbCommonWriter::EscapeValue(const Value& value)
 void InfluxdbCommonWriter::SendMetric(const Checkable::Ptr& checkable, const Dictionary::Ptr& tmpl,
 	const String& label, const Dictionary::Ptr& fields, double ts)
 {
+	AssertOnWorkQueue();
+
 	std::ostringstream msgbuf;
 	msgbuf << EscapeKeyOrTagValue(tmpl->Get("measurement"));
 
@@ -399,7 +388,7 @@ void InfluxdbCommonWriter::SendMetric(const Checkable::Ptr& checkable, const Dic
 		}
 	}
 
-	msgbuf << " " << std::fixed << std::setprecision(0) << ts * 1.0e9;
+	msgbuf << " " <<  static_cast<unsigned long>(ts);
 
 	Log(LogDebug, GetReflectionType()->GetName())
 		<< "Checkable '" << checkable->GetName() << "' adds to metric list:'" << msgbuf.str() << "'.";
@@ -554,6 +543,7 @@ Url::Ptr InfluxdbCommonWriter::AssembleBaseUrl()
 	url->SetScheme(GetSslEnable() ? "https" : "http");
 	url->SetHost(GetHost());
 	url->SetPort(GetPort());
+	url->AddQueryElement("precision", "s");
 
 	return url;
 }
@@ -571,7 +561,7 @@ void InfluxdbCommonWriter::ValidateHostTemplate(const Lazy<Dictionary::Ptr>& lva
 		ObjectLock olock(tags);
 		for (const Dictionary::Pair& pair : tags) {
 			if (!MacroProcessor::ValidateMacroString(pair.second))
-				BOOST_THROW_EXCEPTION(ValidationError(this, { "host_template", "tags", pair.first }, "Closing $ not found in macro format string '" + pair.second));
+				BOOST_THROW_EXCEPTION(ValidationError(this, { "host_template", "tags", pair.first }, "Closing $ not found in macro format string '" + pair.second + "'."));
 		}
 	}
 }
@@ -589,8 +579,7 @@ void InfluxdbCommonWriter::ValidateServiceTemplate(const Lazy<Dictionary::Ptr>& 
 		ObjectLock olock(tags);
 		for (const Dictionary::Pair& pair : tags) {
 			if (!MacroProcessor::ValidateMacroString(pair.second))
-				BOOST_THROW_EXCEPTION(ValidationError(this, { "service_template", "tags", pair.first }, "Closing $ not found in macro format string '" + pair.second));
+				BOOST_THROW_EXCEPTION(ValidationError(this, { "service_template", "tags", pair.first }, "Closing $ not found in macro format string '" + pair.second + "'."));
 		}
 	}
 }
-
